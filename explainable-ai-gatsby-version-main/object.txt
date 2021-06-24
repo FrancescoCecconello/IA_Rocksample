@@ -1,0 +1,53 @@
+{
+    "problemName": "tiger",
+    "traceName": "tiger 40",
+    "attributes": {
+        "actions": [
+            "open left",
+            "listen",
+            "open right"
+        ],
+        "states": [
+            "tiger left",
+            "tiger right"
+        ]
+    },
+    "constraints": [
+        [
+            [
+                {
+                    "state": "tiger left",
+                    "operator": "<",
+                    "variable": "x1"
+                },
+                {
+                    "state": "tiger right",
+                    "operator": "<",
+                    "variable": "x2"
+                }
+            ],
+            [
+                {
+                    "state": "tiger right",
+                    "operator": ">",
+                    "variable": "x2"
+                }
+            ]
+        ]
+    ],
+    "logicConnector": [
+        2
+    ],
+    "tempConstraint": [
+        {}
+    ],
+    "ruleString": [
+        [
+            "tiger left < x1 and tiger right < x2",
+            "tiger right > x2"
+        ]
+    ],
+    "subRuleCounter": [
+        1
+    ]
+}

@@ -1,0 +1,174 @@
+from fastapi import APIRouter, Request
+from typing import List
+
+from ..types.Data import Data
+
+from ..utility.map import *
+from src.xpomcp.Tiger_Problem import *
+from src.xpomcp.Velocity_Regulation_Problem import *
+from src.xpomcp.Rocksample_Problem import *
+from src.xpomcp.AtomicRule import AtomicRule
+from src.xpomcp.RuleTemplate import RuleTemplate
+
+
+router = APIRouter()
+
+
+@router.post('/api/send_rule')
+def synthetize_rule(request: Data):
+    data = request
+
+    map_variable_string_to_object = dict()
+    map_belief_to_rule_sintax = dict()
+
+    problem = None
+    rule = None
+    trace = data.ruleTemplate[0].trace
+    if data.ruleTemplate[0].problem == "tiger":
+        ''' Initialization of Tiger problem '''
+        problem = Tiger_Problem(xes_log=f'src/xpomcp/tracce/{MAP_TRACES[trace]}',
+                                num_traces_to_analyze=100,
+                                states=[TIGER_LEFT, TIGER_RIGHT])
+        map_belief_to_rule_sintax = {
+            "tiger left": TIGER_LEFT.get_probability(),
+            "tiger right": TIGER_RIGHT.get_probability()
+        }
+        states = ["tiger left", "tiger right"]
+    elif data.ruleTemplate[0].problem == "velocity regulation":
+        ''' Initialization of Velocity regulation problem '''
+        problem = Velocity_Regulation_Problem(xes_log=f'src/xpomcp/tracce/{MAP_TRACES[trace]}',
+                                              states=[
+                                                  EASY, INTERMEDIATE, DIFFICULT],
+                                              num_traces_to_analyze=None)
+        map_belief_to_rule_sintax = {
+            "easy": EASY.get_probability(),
+            "intermediate": INTERMEDIATE.get_probability(),
+            "difficult": DIFFICULT.get_probability()
+        }
+
+        states = ["easy", "intermediate", "difficult"]
+    elif data.ruleTemplate[0].problem == "rocksample":
+        problem = Rocksample_Problem(xes_log=f'src/xpomcp/tracce/{MAP_TRACES[trace]}',
+                                              states=[
+                                                  ROCK_0,ROCK_1,ROCK_2,ROCK_3,ROCK_4,ROCK_5,ROCK_6,ROCK_7,ROCK_8,ROCK_9,ROCK_10,ROCK_REL],
+                                              num_traces_to_analyze=None)
+        map_belief_to_rule_sintax = {
+                "rock 0": ROCK_0.get_probability(),
+                "rock 1": ROCK_1.get_probability(),
+                "rock 2": ROCK_2.get_probability(),
+                "rock 3": ROCK_3.get_probability(),
+                "rock 4": ROCK_4.get_probability(),
+                "rock 5": ROCK_5.get_probability(),
+                "rock 6": ROCK_6.get_probability(),
+                "rock 7": ROCK_7.get_probability(),
+                "rock 8": ROCK_8.get_probability(),
+                "rock 9": ROCK_9.get_probability(),
+                "rock 10": ROCK_10.get_probability(),
+                "rock rel": ROCK_REL.get_probability()
+        }
+
+        states = ["rock 0","rock 1","rock 2","rock 3","rock 4","rock 5","rock 6","rock 7","rock 8","rock 9","rock 10","rock rel"]
+    # TODO: create the list of actions out.
+    rule_list = []
+    actions = []
+    for atomic_rule in data.ruleTemplate:
+        rule = AtomicRule(
+            actions=[MAP_ACTIONS_TO_BACKEND[atomic_rule.action.name]],
+            problem=problem
+        )
+        actions.append({"id": atomic_rule.action.id,
+                        "name": atomic_rule.action.name})
+
+        for variable in atomic_rule.variables:
+            variable_name = variable
+            map_variable_string_to_object[variable_name] = rule.declareVariable(
+                variable_name)
+
+        for constraints in atomic_rule.constraints:
+            '''constraints in "and" here'''
+            constraint = []
+            for single_constraint in constraints:
+                '''
+                for each constraint in "AND",
+                the constraint gets created following the template:
+                "variable" "operator" "belief"
+                '''
+                el = eval(
+                    single_constraint.variable +
+                    single_constraint.operator +
+                    str(map_belief_to_rule_sintax[single_constraint.state]),
+                    {}, dict(**map_variable_string_to_object,
+                             **map_belief_to_rule_sintax,
+                             **{"single_constraint": single_constraint,
+                                "map_belief_to_rule_sintax": map_belief_to_rule_sintax}))
+                constraint.append(el)
+            rule.addConstraint(constraint)
+        hard_constraints = []
+
+        for hard_constraint in atomic_rule.hard_constraint:
+            el = eval(
+                hard_constraint.variable +
+                hard_constraint.operator +
+                str(hard_constraint.probability),
+                {}, dict(**map_variable_string_to_object))
+            hard_constraints.append(el)
+
+        rule.addHardConstraint(hard_constraints)
+        rule_list.append(rule)
+
+    rule_template = RuleTemplate(rule_list, problem, threshold=0.10)
+
+    hard_constraints = []
+    for hard_constraint in data.hardConstraint:
+        el = eval(
+            hard_constraint.variable +
+            hard_constraint.operator +
+            str(hard_constraint.term),
+            {}, dict(**map_variable_string_to_object))
+        hard_constraints.append(el)
+    rule_template.add_constraint(hard_constraints)
+    rule_template.solve()
+    #
+    constraints_synthetized = rule_template.result.get_constraint_synthetized(
+        MAP_STATES_TO_FRONTEND)
+    for ruleIndex in range(len(constraints_synthetized)):
+        constraints_synthetized[ruleIndex]['action'] = actions[ruleIndex]
+
+    all_actions = []
+    for rule in rule_template.rule_list:
+        all_actions.append(rule.actions)
+
+    all_actions = [action for actions in all_actions for action in actions]
+
+    # actions = list(map(lambda x: MAP_ACTIONS_TO_FRONTEND[x], all_actions))
+    anomalies_same_action = []
+    for indexRule in range(len(rule_template.rule_list)):
+        rule = rule_template.rule_list[indexRule]
+        anomalies = {
+            "actions": actions[indexRule],
+            "anomalies": list(
+                rule.result.get_all_rule_unsat_same_action(MAP_ACTIONS_TO_FRONTEND,
+                                                           MAP_STATES_TO_FRONTEND)
+            )
+        }
+        anomalies_same_action.append(anomalies)
+
+    anomalies_different_action = []
+    for indexRule in range(len(rule_template.rule_list)):
+        rule = rule_template.rule_list[indexRule]
+        anomalies = {
+            "actions": actions[indexRule],
+            "anomalies": list(
+                rule.result.get_all_rule_unsat_different_action(MAP_ACTIONS_TO_FRONTEND,
+                                                                MAP_STATES_TO_FRONTEND)
+            )
+        }
+        anomalies_different_action.append(anomalies)
+
+    return ({
+        "rule": constraints_synthetized,
+        "anomalies_same_action": anomalies_same_action,
+        "anomalies_different_action": anomalies_different_action,
+        "states": states,
+        "actions": actions
+    })
